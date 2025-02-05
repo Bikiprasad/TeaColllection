@@ -2,15 +2,20 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 from datetime import datetime
-import os
-from utils import load_data, save_data, initialize_data_files
+from utils import (
+    initialize_database,
+    get_customers,
+    get_collections,
+    add_customer,
+    add_collection
+)
+
+# Initialize database
+initialize_database()
 
 # Initialize session state
 if 'page' not in st.session_state:
     st.session_state.page = 'home'
-
-# Ensure data files exist
-initialize_data_files()
 
 # Page title and navigation
 st.title('Green Tea Leaf Collection Tracker')
@@ -21,9 +26,26 @@ page = st.sidebar.radio(
     ['Home', 'Add Customer', 'Daily Collection', 'Collection History', 'Statistics']
 )
 
-# Load data
-customers_df = load_data('customers.csv')
-collections_df = load_data('collections.csv')
+# Convert SQLAlchemy results to DataFrames
+def customers_to_df(customers):
+    return pd.DataFrame([
+        {
+            'customer_id': c.customer_id,
+            'name': c.name,
+            'contact': c.contact,
+            'address': c.address
+        } for c in customers
+    ])
+
+def collections_to_df(collections):
+    return pd.DataFrame([
+        {
+            'date': c.date,
+            'customer_id': c.customer_id,
+            'customer_name': c.customer.name,
+            'weight': c.weight
+        } for c in collections
+    ])
 
 # Home page
 if page == 'Home':
@@ -35,88 +57,83 @@ if page == 'Home':
     - View collection history
     - Analyze collection statistics
     """)
-    
+
     # Display today's collections if any
     today = datetime.now().date()
-    today_collections = collections_df[
-        pd.to_datetime(collections_df['date']).dt.date == today
-    ]
-    
-    if not today_collections.empty:
-        st.subheader("Today's Collections")
-        st.dataframe(today_collections)
+    collections = collections_to_df(get_collections())
+    if not collections.empty:
+        today_collections = collections[
+            pd.to_datetime(collections['date']).dt.date == today
+        ]
+        if not today_collections.empty:
+            st.subheader("Today's Collections")
+            st.dataframe(today_collections)
 
 # Add Customer page
 elif page == 'Add Customer':
     st.header('Add New Customer')
-    
+
     with st.form('add_customer_form'):
         name = st.text_input('Customer Name')
         contact = st.text_input('Contact Number (Optional)')
         address = st.text_area('Address (Optional)')
-        
+
         submit = st.form_submit_button('Add Customer')
-        
+
         if submit and name:
-            new_customer = pd.DataFrame({
-                'customer_id': [len(customers_df) + 1],
-                'name': [name],
-                'contact': [contact],
-                'address': [address]
-            })
-            customers_df = pd.concat([customers_df, new_customer], ignore_index=True)
-            save_data(customers_df, 'customers.csv')
+            add_customer(name, contact, address)
             st.success('Customer added successfully!')
 
     st.subheader('Existing Customers')
-    st.dataframe(customers_df)
+    customers = customers_to_df(get_customers())
+    st.dataframe(customers)
 
 # Daily Collection page
 elif page == 'Daily Collection':
     st.header('Record Daily Collection')
-    
+
+    customers = get_customers()
     with st.form('collection_form'):
         date = st.date_input('Collection Date', datetime.now())
         customer = st.selectbox(
             'Select Customer',
-            options=customers_df['name'].tolist()
+            options=[c.name for c in customers],
         )
         weight = st.number_input('Weight (kg)', min_value=0.0, step=0.1)
-        
+
         submit = st.form_submit_button('Record Collection')
-        
+
         if submit:
             if weight <= 0:
                 st.error('Please enter a valid weight')
             else:
-                customer_id = customers_df[customers_df['name'] == customer]['customer_id'].iloc[0]
-                new_collection = pd.DataFrame({
-                    'date': [date],
-                    'customer_id': [customer_id],
-                    'customer_name': [customer],
-                    'weight': [weight]
-                })
-                collections_df = pd.concat([collections_df, new_collection], ignore_index=True)
-                save_data(collections_df, 'collections.csv')
+                customer_id = next(c.customer_id for c in customers if c.name == customer)
+                add_collection(date, customer_id, weight)
                 st.success('Collection recorded successfully!')
 
 # Collection History page
 elif page == 'Collection History':
     st.header('Collection History')
-    
+
+    customers = get_customers()
+    collections = get_collections()
+    collections_df = collections_to_df(collections)
+
     # Filters
     col1, col2 = st.columns(2)
     with col1:
         customer_filter = st.multiselect(
             'Filter by Customer',
-            options=['All'] + customers_df['name'].tolist(),
+            options=['All'] + [c.name for c in customers],
             default='All'
         )
     with col2:
         date_range = st.date_input(
             'Date Range',
-            value=(collections_df['date'].min() if not collections_df.empty else datetime.now(),
-                   datetime.now()),
+            value=(
+                collections_df['date'].min() if not collections_df.empty else datetime.now(),
+                datetime.now()
+            ),
             key='date_range'
         )
 
@@ -128,13 +145,16 @@ elif page == 'Collection History':
         (pd.to_datetime(filtered_df['date']) >= pd.to_datetime(date_range[0])) &
         (pd.to_datetime(filtered_df['date']) <= pd.to_datetime(date_range[1]))
     ]
-    
+
     st.dataframe(filtered_df)
 
 # Statistics page
 elif page == 'Statistics':
     st.header('Collection Statistics')
-    
+
+    collections = get_collections()
+    collections_df = collections_to_df(collections)
+
     if not collections_df.empty:
         # Total collections by customer
         st.subheader('Total Collections by Customer')
@@ -142,19 +162,19 @@ elif page == 'Statistics':
         fig1 = px.bar(customer_totals, x='customer_name', y='weight',
                       title='Total Collections by Customer')
         st.plotly_chart(fig1)
-        
+
         # Daily collections trend
         st.subheader('Daily Collections Trend')
         daily_totals = collections_df.groupby('date')['weight'].sum().reset_index()
         fig2 = px.line(daily_totals, x='date', y='weight',
                        title='Daily Collections Trend')
         st.plotly_chart(fig2)
-        
+
         # Summary statistics
         st.subheader('Summary Statistics')
         col1, col2, col3 = st.columns(3)
         with col1:
-            st.metric('Total Customers', len(customers_df))
+            st.metric('Total Customers', len(get_customers()))
         with col2:
             st.metric('Total Collections (kg)', f"{collections_df['weight'].sum():.2f}")
         with col3:
