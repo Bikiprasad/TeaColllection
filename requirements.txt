@@ -1,0 +1,8 @@
+streamlit
+pandas
+datetime
+plotly
+sqlalchemy
+trafilatura
+psycopg2-binary
+twilio
