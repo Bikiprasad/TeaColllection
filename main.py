@@ -7,7 +7,9 @@ from utils import (
     get_customers,
     get_collections,
     add_customer,
-    add_collection
+    add_collection,
+    update_collection,
+    delete_collection
 )
 
 # Initialize database
@@ -16,6 +18,8 @@ initialize_database()
 # Initialize session state
 if 'page' not in st.session_state:
     st.session_state.page = 'home'
+if 'date_filter_type' not in st.session_state:
+    st.session_state.date_filter_type = 'range'
 
 # Page title and navigation
 st.title('Green Tea Leaf Collection Tracker')
@@ -40,6 +44,7 @@ def customers_to_df(customers):
 def collections_to_df(collections):
     return pd.DataFrame([
         {
+            'id': c.id,
             'date': c.date,
             'customer_id': c.customer_id,
             'customer_name': c.customer.name,
@@ -120,7 +125,7 @@ elif page == 'Collection History':
     collections_df = collections_to_df(collections)
 
     # Filters
-    col1, col2 = st.columns(2)
+    col1, col2, col3 = st.columns(3)
     with col1:
         customer_filter = st.multiselect(
             'Filter by Customer',
@@ -128,25 +133,66 @@ elif page == 'Collection History':
             default='All'
         )
     with col2:
-        date_range = st.date_input(
-            'Date Range',
-            value=(
-                collections_df['date'].min() if not collections_df.empty else datetime.now(),
-                datetime.now()
-            ),
-            key='date_range'
+        date_filter_type = st.radio(
+            'Date Filter Type',
+            options=['Single Date', 'Date Range'],
+            key='date_filter_type'
         )
+    with col3:
+        if date_filter_type == 'Single Date':
+            selected_date = st.date_input(
+                'Select Date',
+                value=datetime.now(),
+                key='single_date'
+            )
+        else:
+            start_date, end_date = st.date_input(
+                'Date Range',
+                value=(
+                    collections_df['date'].min() if not collections_df.empty else datetime.now(),
+                    datetime.now()
+                ),
+                key='date_range'
+            )
 
     # Apply filters
     filtered_df = collections_df.copy()
     if 'All' not in customer_filter and customer_filter:
         filtered_df = filtered_df[filtered_df['customer_name'].isin(customer_filter)]
-    filtered_df = filtered_df[
-        (pd.to_datetime(filtered_df['date']) >= pd.to_datetime(date_range[0])) &
-        (pd.to_datetime(filtered_df['date']) <= pd.to_datetime(date_range[1]))
-    ]
 
-    st.dataframe(filtered_df)
+    if date_filter_type == 'Single Date':
+        filtered_df = filtered_df[
+            pd.to_datetime(filtered_df['date']).dt.date == selected_date
+        ]
+    else:
+        filtered_df = filtered_df[
+            (pd.to_datetime(filtered_df['date']).dt.date >= start_date) &
+            (pd.to_datetime(filtered_df['date']).dt.date <= end_date)
+        ]
+
+    # Display collections with edit/delete options
+    if not filtered_df.empty:
+        for _, row in filtered_df.iterrows():
+            with st.expander(f"{row['customer_name']} - {row['date']} - {row['weight']}kg"):
+                col1, col2 = st.columns(2)
+                with col1:
+                    new_date = st.date_input('Date', value=row['date'], key=f"date_{row['id']}")
+                    new_weight = st.number_input('Weight (kg)', 
+                                               value=float(row['weight']), 
+                                               min_value=0.0, 
+                                               step=0.1,
+                                               key=f"weight_{row['id']}")
+                    if st.button('Update', key=f"update_{row['id']}"):
+                        if update_collection(row['id'], new_date, new_weight):
+                            st.success('Collection updated successfully!')
+                            st.rerun()
+                with col2:
+                    if st.button('Delete', key=f"delete_{row['id']}"):
+                        if delete_collection(row['id']):
+                            st.success('Collection deleted successfully!')
+                            st.rerun()
+    else:
+        st.info('No collections found for the selected filters.')
 
 # Statistics page
 elif page == 'Statistics':

@@ -65,3 +65,24 @@ def add_collection(date, customer_id, weight):
     db.add(collection)
     db.commit()
     return collection
+
+def update_collection(collection_id, date, weight):
+    """Update an existing collection."""
+    db = next(get_db())
+    collection = db.query(Collection).filter(Collection.id == collection_id).first()
+    if collection:
+        collection.date = date
+        collection.weight = weight
+        db.commit()
+        return collection
+    return None
+
+def delete_collection(collection_id):
+    """Delete a collection."""
+    db = next(get_db())
+    collection = db.query(Collection).filter(Collection.id == collection_id).first()
+    if collection:
+        db.delete(collection)
+        db.commit()
+        return True
+    return False
