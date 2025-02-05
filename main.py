@@ -48,7 +48,7 @@ page = st.sidebar.radio(
 
 # Home page
 if '🏠 Home' in page:
-    st.title('🍃 Green Tea Leaf Collection Tracker')
+    st.title('🍃 LP Green Leaf Collection')
 
     # Quick stats in columns
     col1, col2, col3 = st.columns(3)
